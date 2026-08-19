@@ -1,42 +1,23 @@
-import { useLayoutEffect, useMemo, useRef, type ReactNode } from 'react'
+import { useMemo, type ReactNode } from 'react'
 import type { Context } from '@deepseek-ai/cordis'
 import type {
   ChatConversationViewNode,
-  ConversationSnapshot,
   SessionId,
 } from '@deepseek-ai/dsh-client-runtime/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
-import type {
-  ChatNode,
-  ChatNodeKind,
-  ChatNodeOwnerProps,
-  ConversationController,
-  ConvViewProps,
-  UseChatNodeTurnData,
-} from '@deepseek-ai/dsh-client-ui-conversation/client'
-import type {
-  InjectFace,
-  PropsLocale,
-  PropsRenderSlots,
-  SnapshotSelectorHook,
-} from '@deepseek-ai/dsh-client-ui-slots'
-import { JsonBlock } from '@deepseek-ai/dsh-client-ui-primitives'
+import type { ConvViewProps } from '@deepseek-ai/dsh-client-ui-conversation/client'
+import type { InjectFace, PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
+import { MarkdownText, MessageText } from '@deepseek-ai/dsh-client-ui-primitives'
 import { en, NS, zh } from '../locales.ts'
 import css from '../ExecutionFoldView.module.css'
 
-export const inject = ['slots', 'sessions', 'workspaces', 'conversation', 'locale']
+export const inject = ['slots', 'sessions', 'locale']
 
 interface FoldInjected {
   readonly loadOlder: () => void
-  readonly loadImage: ChatNodeOwnerProps['loadImage']
-  readonly openFile: ChatNodeOwnerProps['openFile']
-  readonly inspectCall: ChatNodeOwnerProps['inspectCall']
-  readonly forkAt: ChatNodeOwnerProps['forkAt']
-  readonly fileMentions: ChatNodeOwnerProps['fileMentions']
 }
 
 type FoldProps = ConvViewProps
-  & PropsRenderSlots<'conversation.chat.node'>
   & InjectFace<FoldInjected>
   & PropsLocale<typeof NS>
 
@@ -52,31 +33,6 @@ export interface FoldableTurn {
 
 type NodeStore = { get: (key: string) => ChatConversationViewNode | undefined }
 type RenderMode = 'all' | 'answer' | 'reasoning'
-type DisclosureRoot = {
-  querySelector: (selector: string) => { click: () => void } | null
-}
-
-function resolveWorkspacePath(cwd: string | undefined, path: string): string {
-  if (path.startsWith('/') || /^[A-Za-z]:[/\\]/.test(path) || path.startsWith('\\\\')) return path
-  if (cwd === undefined || cwd === '') return path
-  return `${cwd.replace(/[/\\]+$/, '')}/${path.replace(/^[/\\]+/, '')}`
-}
-
-const CHAT_NODE_INJECT = {
-  hooks: {
-    turnData: (
-      { useSession }: { useSession: SnapshotSelectorHook<ConversationSnapshot> },
-      nodeKey: string,
-    ): UseChatNodeTurnData => function useTurnData(key) {
-      return useSession((snapshot) => {
-        const location = snapshot.chat.nodes.get(nodeKey)?.location
-        return location?.kind === 'turn' || location?.kind === 'step'
-          ? location.turn.data.get(key)
-          : undefined
-      })
-    },
-  },
-}
 
 function turnOf(node: ChatConversationViewNode): number | undefined {
   if (node.location.kind === 'turn' || node.location.kind === 'step') return node.location.turn.turn
@@ -146,47 +102,135 @@ export function foldableTurns(order: readonly string[], nodes: NodeStore): Reado
   return result
 }
 
-function projectedNode(node: ChatConversationViewNode, mode: RenderMode): ChatConversationViewNode {
-  if (mode === 'all' || node.kind !== 'assistant-step') return node
-  const data = node.data as {
-    readonly blocks?: readonly { readonly kind?: string }[]
-    readonly [key: string]: unknown
+/** Preserve every text block; non-text blocks remain visible through the raw fallback. */
+export function contentText(value: unknown): string {
+  if (typeof value === 'string') return value
+  if (!Array.isArray(value)) return ''
+  return value.map((item) => {
+    if (typeof item === 'string') return item
+    if (typeof item !== 'object' || item === null) return ''
+    const block = item as { readonly text?: unknown; readonly type?: unknown; readonly kind?: unknown }
+    if (typeof block.text === 'string') return block.text
+    if (block.type === 'image' || block.kind === 'image') return '[image]'
+    return ''
+  }).filter(Boolean).join('\n')
+}
+
+function safeJson(value: unknown): string {
+  try {
+    return JSON.stringify(value, null, 2) ?? String(value)
+  } catch {
+    return String(value)
   }
-  const blocks = (data.blocks ?? []).filter(block => mode === 'reasoning'
-    ? block.kind === 'reasoning'
-    : block.kind !== 'reasoning')
-  return { ...node, data: { ...data, blocks } }
 }
 
-/** Open rc.7's nested context disclosure so the outer execution fold is the only disclosure. */
-export function expandNestedContext(root: DisclosureRoot): boolean {
-  const disclosure = root.querySelector('[data-disclosure-row][aria-expanded="false"]')
-  if (disclosure === null) return false
-  disclosure.click()
-  return true
+function blocksOf(node: ChatConversationViewNode, mode: RenderMode) {
+  if (node.kind !== 'assistant-step') return []
+  const blocks = (node.data as {
+    readonly blocks?: readonly { readonly kind?: string; readonly text?: unknown; readonly [key: string]: unknown }[]
+  }).blocks ?? []
+  if (mode === 'reasoning') return blocks.filter(block => block.kind === 'reasoning')
+  if (mode === 'answer') return blocks.filter(block => block.kind !== 'reasoning')
+  return blocks
 }
 
-function ExpandedContext({ children }: { readonly children: ReactNode }) {
-  const rootRef = useRef<HTMLDivElement>(null)
-  const expandedRef = useRef(false)
-  useLayoutEffect(() => {
-    if (expandedRef.current || rootRef.current === null) return
-    expandedRef.current = expandNestedContext(rootRef.current)
-  }, [])
-  return <div ref={rootRef} className={css.expandedContext}>{children}</div>
+function ProcessLabel({ children }: { readonly children: ReactNode }) {
+  return <div className={css.processLabel}>{children}</div>
+}
+
+function AssistantNode({ node, mode, t }: {
+  readonly node: ChatConversationViewNode
+  readonly mode: RenderMode
+  readonly t: FoldProps['t']
+}) {
+  return (
+    <div className={mode === 'answer' ? css.answer : css.assistantProcess}>
+      {blocksOf(node, mode).map((block, index) => {
+        if ((block.kind === 'text' || block.kind === 'reasoning') && typeof block.text === 'string') {
+          return (
+            <div className={block.kind === 'reasoning' ? css.reasoning : css.assistantText} key={index}>
+              {block.kind === 'reasoning' && <ProcessLabel>{t('node.reasoning')}</ProcessLabel>}
+              <MarkdownText text={block.text} />
+            </div>
+          )
+        }
+        return (
+          <div className={css.rawBlock} key={index}>
+            <ProcessLabel>{block.kind ?? t('node.details')}</ProcessLabel>
+            <pre>{safeJson(block)}</pre>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function ToolNode({ node, t }: { readonly node: ChatConversationViewNode; readonly t: FoldProps['t'] }) {
+  const root = (node.data as { readonly root?: Record<string, unknown> }).root ?? {}
+  const call = typeof root.call === 'object' && root.call !== null
+    ? root.call as Record<string, unknown>
+    : undefined
+  const name = typeof root.name === 'string'
+    ? root.name
+    : typeof call?.name === 'string'
+      ? call.name
+      : typeof root.callId === 'string' ? root.callId : t('node.tool')
+  const args = typeof root.argsRaw === 'string'
+    ? root.argsRaw
+    : typeof call?.argsRaw === 'string' ? call.argsRaw : undefined
+  const result = contentText(root.content)
+  return (
+    <div className={css.toolBlock}>
+      <ProcessLabel>{t('node.tool')} · {name}</ProcessLabel>
+      {args !== undefined && args.trim() !== '' && <pre>{args}</pre>}
+      {result !== '' && <div className={css.toolResult}><MessageText text={result} /></div>}
+      {result === '' && <pre>{safeJson(root)}</pre>}
+    </div>
+  )
+}
+
+function renderConversationNode(
+  node: ChatConversationViewNode,
+  mode: RenderMode,
+  t: FoldProps['t'],
+): ReactNode {
+  if (node.kind === 'assistant-step') return <AssistantNode node={node} mode={mode} t={t} />
+  if (node.kind === 'user') {
+    const text = contentText((node.data as { readonly content?: unknown }).content)
+    return <div className={css.user}><MessageText text={text || safeJson(node.data)} /></div>
+  }
+  if (node.kind === 'steering') {
+    const text = contentText((node.data as { readonly content?: unknown }).content)
+    return (
+      <div className={css.messageBlock}>
+        <ProcessLabel>{t('node.steering')}</ProcessLabel>
+        <MessageText text={text || safeJson(node.data)} />
+      </div>
+    )
+  }
+  if (node.kind === 'context') {
+    const text = contentText((node.data as { readonly content?: unknown }).content)
+    return (
+      <div className={css.contextBlock}>
+        <ProcessLabel>{t('node.context')}</ProcessLabel>
+        <pre data-context-injection-body>{text || safeJson(node.data)}</pre>
+      </div>
+    )
+  }
+  if (node.kind === 'tool-call' || node.kind === 'tool') return <ToolNode node={node} t={t} />
+  if (node.kind === 'turn-tail') return null
+  return (
+    <div className={css.rawBlock}>
+      <ProcessLabel>{node.kind}</ProcessLabel>
+      <pre>{safeJson(node.data)}</pre>
+    </div>
+  )
 }
 
 function FoldedChatView({
   useSession,
-  useSessions,
   sessionId,
-  renderSlot,
   loadOlder,
-  loadImage,
-  openFile,
-  inspectCall,
-  forkAt,
-  fileMentions,
   t,
 }: FoldProps) {
   const order = useSession(snapshot => snapshot.chat.order)
@@ -194,37 +238,11 @@ function FoldedChatView({
   const hasMore = useSession(snapshot => snapshot.hasMore)
   const loadingOlder = useSession(snapshot => snapshot.loadingOlder)
   const running = useSession(snapshot => snapshot.running)
-  const cwd = useSessions(snapshot => snapshot.byId[sessionId]?.cwd)
   const folded = useMemo(() => foldableTurns(order, nodes), [order, nodes])
-  const renderChatNode = renderSlot as unknown as (
-    key: 'conversation.chat.node',
-    owner: ChatNodeOwnerProps & { readonly node: ChatNode },
-    options: {
-      readonly entryKey: ChatNodeKind
-      readonly hookContext: string
-      readonly fallback: ReactNode
-    },
-  ) => ReactNode
 
   const renderNode = (key: string, mode: RenderMode = 'all'): ReactNode => {
     const source = nodes.get(key)
     if (source === undefined) return null
-    const node = projectedNode(source, mode) as ChatNode
-    const owner: ChatNodeOwnerProps & { readonly node: ChatNode } = {
-      node,
-      selectedCallId: undefined,
-      cwd,
-      openFile,
-      inspectCall,
-      forkAt,
-      loadImage,
-      fileMentions,
-    }
-    const rendered = renderChatNode('conversation.chat.node', owner, {
-      entryKey: node.kind as ChatNodeKind,
-      hookContext: source.key,
-      fallback: <JsonBlock label={source.kind} payload={source.data} defaultOpen={source.kind === 'context'} />,
-    })
     return (
       <div
         className={css.flowItem}
@@ -232,7 +250,7 @@ function FoldedChatView({
         data-chat-flow-key={source.key}
         data-chat-flow-kind={source.kind}
       >
-        {source.kind === 'context' ? <ExpandedContext>{rendered}</ExpandedContext> : rendered}
+        {renderConversationNode(source, mode, t)}
       </div>
     )
   }
@@ -296,23 +314,8 @@ export function apply(ctx: Context): void {
     order: -10,
     locale: NS,
     label: () => t('view.executionFold'),
-    children: {
-      'conversation.chat.node': { kind: 'keyed', scope: 'session', inject: CHAT_NODE_INJECT },
-    },
     inject: (sessionId: SessionId): FoldInjected => ({
       loadOlder: () => { void ctx.sessions.binding(sessionId)?.session.loadOlder() },
-      loadImage: attachment => (ctx.conversation as ConversationController).resolveImage(sessionId, attachment),
-      openFile: (path) => {
-        const cwd = ctx.sessions.list.getSnapshot().byId[sessionId]?.cwd
-        void ctx.workspaces.openPath(resolveWorkspacePath(cwd, path)).catch(() => {})
-      },
-      inspectCall: () => {},
-      forkAt: (seq) => {
-        void ctx.sessions.fork({ sessionId, atSeq: seq, increaseTitle: true })
-          .then(childId => { ctx.sessions.open(childId) })
-          .catch(() => {})
-      },
-      fileMentions: owner => ctx.get('chatFileMentions')?.forClosing(owner),
     }),
   }, FoldedChatView))
 }

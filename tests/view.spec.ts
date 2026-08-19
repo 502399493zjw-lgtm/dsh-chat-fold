@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
 import type { ChatConversationViewNode } from '@deepseek-ai/dsh-client-runtime/client'
-import { apply, expandNestedContext, foldableTurns } from '../src/client/view.tsx'
+import { apply, contentText, foldableTurns } from '../src/client/view.tsx'
 
 vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => ({
   JsonBlock: () => null,
@@ -56,22 +56,16 @@ describe('folded conversation projection', () => {
     )
   })
 
-  it('opens the native context disclosure so the outer fold reveals its body immediately', () => {
-    const click = vi.fn()
-    const root = {
-      querySelector: vi.fn(() => ({ click })),
-    }
-
-    expect(expandNestedContext(root)).toBe(true)
-    expect(root.querySelector).toHaveBeenCalledWith(
-      '[data-disclosure-row][aria-expanded="false"]',
-    )
-    expect(click).toHaveBeenCalledOnce()
+  it('keeps the complete context text instead of reducing it to a nested disclosure label', () => {
+    expect(contentText([
+      { type: 'text', text: 'Current runtime context.' },
+      { type: 'text', text: '<available_skills>all entries</available_skills>' },
+    ])).toBe('Current runtime context.\n<available_skills>all entries</available_skills>')
   })
 })
 
 describe('conversation view registration', () => {
-  it('registers a distinct view id instead of shadowing the built-in chat cell', () => {
+  it('registers a distinct view without redeclaring the stock chat node slot', () => {
     const registrations: Array<{
       name?: string
       id?: string
@@ -79,6 +73,7 @@ describe('conversation view registration', () => {
       priority?: number
       children?: Record<string, { kind?: string; scope?: string }>
     }> = []
+    const declaredSlots = new Set(['conversation.chat.node'])
     const ctx = {
       effect(callback: () => void) { callback() },
       locale: {
@@ -94,6 +89,10 @@ describe('conversation view registration', () => {
           priority?: number
           children?: Record<string, { kind?: string; scope?: string }>
         }) {
+          for (const child of Object.keys(definition.children ?? {})) {
+            if (declaredSlots.has(child)) throw new Error(`slot "${child}" is already declared`)
+            declaredSlots.add(child)
+          }
           registrations.push(definition)
         },
       },
@@ -105,10 +104,8 @@ describe('conversation view registration', () => {
     expect(registrations).toContainEqual(expect.objectContaining({
       name: 'conversation.view',
       id: 'folded-chat',
-      children: expect.objectContaining({
-        'conversation.chat.node': expect.objectContaining({ kind: 'keyed', scope: 'session' }),
-      }),
     }))
+    expect(registrations.find(entry => entry.id === 'folded-chat')?.children).toBeUndefined()
     expect(registrations).not.toContainEqual(expect.objectContaining({
       name: 'conversation.view',
       id: 'chat',
