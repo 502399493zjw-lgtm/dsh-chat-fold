@@ -288,6 +288,11 @@ function firstLine(text: string): string {
   return newline === -1 ? visible : visible.slice(0, newline)
 }
 
+/** Keep the stock one-line preview readable when reasoning starts with Markdown emphasis. */
+export function reasoningSummary(text: string): string {
+  return firstLine(text).replace(/^(\*{1,3}|_{1,3}|~~|`{1,3})(.*?)\1$/, '$2')
+}
+
 function InnerExecutionDisclosure({
   kind,
   icon,
@@ -405,7 +410,7 @@ function AssistantNode({ node, mode, t }: {
                 kind="reasoning"
                 icon={<IconThinkOutline14 size={14} />}
                 title="Think"
-                summary={firstLine(block.text)}
+                summary={reasoningSummary(block.text)}
                 bodyClassName={css.reasoningBody}
                 key={index}
               >

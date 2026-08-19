@@ -9,6 +9,7 @@ import {
   foldableTurns,
   innerNodePresentation,
   innerToolPresentation,
+  reasoningSummary,
 } from '../src/client/view.tsx'
 
 vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => ({
@@ -147,6 +148,13 @@ describe('folded conversation projection', () => {
       title: 'Tool call',
       summary: 'custom_tool · demo',
     }))
+  })
+
+  it('removes an outer Markdown emphasis wrapper from the reasoning summary', () => {
+    expect(reasoningSummary('**Planning foreground sleep execution**\nMore detail.')).toBe(
+      'Planning foreground sleep execution',
+    )
+    expect(reasoningSummary('Keep *inline* emphasis')).toBe('Keep *inline* emphasis')
   })
 })
 
