@@ -9,6 +9,12 @@ import type { ConvViewProps } from '@deepseek-ai/dsh-client-ui-conversation/clie
 import type { InjectFace, PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import {
   DisclosureRow,
+  IconApiOutline14,
+  IconBrowseOutline16,
+  IconCodeOutline16,
+  IconEditOutline16,
+  IconSearchOutline16,
+  IconSparkle16,
   IconThinkOutline14,
   MarkdownText,
   MessageText,
@@ -43,6 +49,104 @@ type AssistantBlock = {
   readonly kind?: string
   readonly text?: unknown
   readonly [key: string]: unknown
+}
+
+export type InnerNodePresentation =
+  | { readonly surface: 'disclosure'; readonly defaultOpen: false }
+  | { readonly surface: 'content' }
+
+/**
+ * The folded view owns only the outer execution group. Inside that group the
+ * same categories that are disclosures in the stock chat remain disclosures,
+ * and each mounts closed just like its stock counterpart.
+ */
+export function innerNodePresentation(
+  nodeKind: string,
+  blockKind?: string,
+): InnerNodePresentation {
+  if (nodeKind === 'context' || nodeKind === 'tool-call' || nodeKind === 'tool') {
+    return { surface: 'disclosure', defaultOpen: false }
+  }
+  if (nodeKind === 'assistant-step' && blockKind === 'reasoning') {
+    return { surface: 'disclosure', defaultOpen: false }
+  }
+  return { surface: 'content' }
+}
+
+export type InnerToolVariant = 'search' | 'read' | 'bash' | 'write' | 'edit' | 'code' | 'others'
+
+export interface InnerToolPresentation {
+  readonly variant: InnerToolVariant
+  readonly title: string
+  readonly summary: string
+  readonly body: string | null
+}
+
+const TOOL_VARIANTS: Readonly<Record<string, InnerToolVariant>> = {
+  bash: 'bash',
+  pwsh: 'bash',
+  read: 'read',
+  web_fetch: 'read',
+  web_search: 'search',
+  grep: 'search',
+  glob: 'search',
+  write: 'write',
+  edit: 'edit',
+  run_code: 'code',
+}
+
+const TOOL_TITLES: Readonly<Record<InnerToolVariant, string>> = {
+  search: 'Search',
+  read: 'Read',
+  bash: 'Bash',
+  write: 'Write',
+  edit: 'Edit',
+  code: 'Code',
+  others: 'Tool call',
+}
+
+const TOOL_SUMMARY_KEYS: Readonly<Record<InnerToolVariant, readonly string[]>> = {
+  bash: ['description', 'command'],
+  read: ['path', 'file_path', 'url'],
+  search: ['query', 'pattern', 'url'],
+  write: ['path', 'file_path'],
+  edit: ['path', 'file_path'],
+  code: ['description'],
+  others: [],
+}
+
+/** Match the stock generic Tool row's classification, title and summary. */
+export function innerToolPresentation(name: string, argsRaw?: string): InnerToolPresentation {
+  const variant = TOOL_VARIANTS[name] ?? 'others'
+  let parsed: unknown
+  if (argsRaw !== undefined) {
+    try {
+      parsed = JSON.parse(argsRaw) as unknown
+    } catch {
+      parsed = undefined
+    }
+  }
+  let base = argsRaw === undefined ? '' : firstLine(argsRaw)
+  if (typeof parsed === 'object' && parsed !== null) {
+    const args = parsed as Record<string, unknown>
+    const preferred = TOOL_SUMMARY_KEYS[variant]
+      .map(key => args[key])
+      .find(value => typeof value === 'string' && value !== '')
+    const fallback = Object.values(args).find(value => typeof value === 'string' && value !== '')
+    const picked = preferred ?? fallback
+    if (typeof picked === 'string') base = firstLine(picked)
+  }
+  const summary = variant === 'others' && name !== ''
+    ? `${name}${base === '' ? '' : ` · ${base}`}`
+    : base
+  return {
+    variant,
+    title: name === 'pwsh' ? 'Pwsh' : TOOL_TITLES[variant],
+    summary,
+    body: argsRaw === undefined
+      ? null
+      : parsed === undefined ? argsRaw : JSON.stringify(parsed, null, 2),
+  }
 }
 
 function turnOf(node: ChatConversationViewNode): number | undefined {
@@ -178,6 +282,66 @@ function ProcessLabel({ children }: { readonly children: ReactNode }) {
   return <div className={css.processLabel}>{children}</div>
 }
 
+function firstLine(text: string): string {
+  const visible = text.trim()
+  const newline = visible.indexOf('\n')
+  return newline === -1 ? visible : visible.slice(0, newline)
+}
+
+function InnerExecutionDisclosure({
+  kind,
+  icon,
+  title,
+  summary,
+  bodyClassName,
+  children,
+}: {
+  readonly kind: 'context' | 'reasoning' | 'tool'
+  readonly icon: ReactNode
+  readonly title: string
+  readonly summary?: string | undefined
+  readonly bodyClassName?: string | undefined
+  readonly children: ReactNode
+}) {
+  const presentation = innerNodePresentation(
+    kind === 'reasoning' ? 'assistant-step' : kind === 'tool' ? 'tool-call' : kind,
+    kind === 'reasoning' ? 'reasoning' : undefined,
+  )
+  const [open, setOpen] = useState<boolean>(
+    presentation.surface === 'disclosure' ? presentation.defaultOpen : false,
+  )
+
+  return (
+    <div
+      className={css.innerDisclosure}
+      data-inner-execution-kind={kind}
+      data-open={open || undefined}
+    >
+      <DisclosureRow
+        rowClassName={css.innerRow}
+        leadingClassName={css.innerLeading}
+        chevronClassName={css.innerChevron}
+        titleClassName={css.innerTitle}
+        icon={icon}
+        title={title}
+        open={open}
+        expandable
+        expandOnRowClick
+        keepContentWhenOpen
+        onToggle={() => { setOpen(value => !value) }}
+        collapsedContent={summary === undefined || summary === '' ? undefined : (
+          <>
+            <span className={css.innerSeparator} aria-hidden />
+            <span className={css.innerSummary}>{summary}</span>
+          </>
+        )}
+      >
+        <div className={bodyClassName}>{children}</div>
+      </DisclosureRow>
+    </div>
+  )
+}
+
 function ExecutionDisclosure({
   running,
   count,
@@ -235,9 +399,22 @@ function AssistantNode({ node, mode, t }: {
     <div className={mode === 'answer' ? css.answer : css.assistantProcess}>
       {blocksOf(node, mode).map((block, index) => {
         if ((block.kind === 'text' || block.kind === 'reasoning') && typeof block.text === 'string') {
+          if (block.kind === 'reasoning') {
+            return (
+              <InnerExecutionDisclosure
+                kind="reasoning"
+                icon={<IconThinkOutline14 size={14} />}
+                title="Think"
+                summary={firstLine(block.text)}
+                bodyClassName={css.reasoningBody}
+                key={index}
+              >
+                {block.text}
+              </InnerExecutionDisclosure>
+            )
+          }
           return (
-            <div className={block.kind === 'reasoning' ? css.reasoning : css.assistantText} key={index}>
-              {block.kind === 'reasoning' && <ProcessLabel>{t('node.reasoning')}</ProcessLabel>}
+            <div className={css.assistantText} key={index}>
               <MarkdownText text={block.text} />
             </div>
           )
@@ -267,13 +444,36 @@ function ToolNode({ node, t }: { readonly node: ChatConversationViewNode; readon
     ? root.argsRaw
     : typeof call?.argsRaw === 'string' ? call.argsRaw : undefined
   const result = contentText(root.content)
+  const presentation = innerToolPresentation(name, args)
+  const raw = presentation.body ?? safeJson(root)
+  const icon = presentation.variant === 'bash' ? <IconApiOutline14 size={14} />
+    : presentation.variant === 'read' ? <IconBrowseOutline16 size={14} />
+      : presentation.variant === 'search' ? <IconSearchOutline16 size={14} />
+        : presentation.variant === 'write' || presentation.variant === 'edit'
+          ? <IconEditOutline16 size={14} />
+          : presentation.variant === 'others' ? <IconSparkle16 size={14} />
+            : <IconCodeOutline16 size={14} />
   return (
-    <div className={css.toolBlock}>
-      <ProcessLabel>{t('node.tool')} · {name}</ProcessLabel>
-      {args !== undefined && args.trim() !== '' && <pre>{args}</pre>}
-      {result !== '' && <div className={css.toolResult}><MessageText text={result} /></div>}
-      {result === '' && <pre>{safeJson(root)}</pre>}
-    </div>
+    <InnerExecutionDisclosure
+      kind="tool"
+      icon={icon}
+      title={presentation.title || t('node.tool')}
+      summary={presentation.summary}
+      bodyClassName={css.toolBody}
+    >
+      {raw.trim() !== '' && (
+        <div className={css.ioSection}>
+          <span className={css.ioLabel}>IN</span>
+          <pre>{raw}</pre>
+        </div>
+      )}
+      {result !== '' && (
+        <div className={css.ioSection}>
+          <span className={css.ioLabel}>OUT</span>
+          <pre>{result}</pre>
+        </div>
+      )}
+    </InnerExecutionDisclosure>
   )
 }
 
@@ -298,11 +498,20 @@ function renderConversationNode(
   }
   if (node.kind === 'context') {
     const text = contentText((node.data as { readonly content?: unknown }).content)
+    const provenance = (node.data as {
+      readonly provenance?: { readonly label?: unknown }
+    }).provenance
+    const source = typeof provenance?.label === 'string' ? provenance.label : undefined
     return (
-      <div className={css.contextBlock}>
-        <ProcessLabel>{t('node.context')}</ProcessLabel>
+      <InnerExecutionDisclosure
+        kind="context"
+        icon={<IconBrowseOutline16 size={14} />}
+        title={t('node.context')}
+        summary={source}
+        bodyClassName={css.contextBody}
+      >
         <pre data-context-injection-body>{text || safeJson(node.data)}</pre>
-      </div>
+      </InnerExecutionDisclosure>
     )
   }
   if (node.kind === 'tool-call' || node.kind === 'tool') return <ToolNode node={node} t={t} />

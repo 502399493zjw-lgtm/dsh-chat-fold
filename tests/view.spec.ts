@@ -7,6 +7,8 @@ import {
   contentText,
   disclosureOpenAfterStatus,
   foldableTurns,
+  innerNodePresentation,
+  innerToolPresentation,
 } from '../src/client/view.tsx'
 
 vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => ({
@@ -111,6 +113,40 @@ describe('folded conversation projection', () => {
       { kind: 'reasoning', text: 'I should read the file.' },
       { kind: 'text', text: 'The file describes the folded view.' },
     ])
+  })
+
+  it('keeps native inner execution rows collapsed when the outer process opens', () => {
+    expect(innerNodePresentation('context')).toEqual({
+      surface: 'disclosure',
+      defaultOpen: false,
+    })
+    expect(innerNodePresentation('tool-call')).toEqual({
+      surface: 'disclosure',
+      defaultOpen: false,
+    })
+    expect(innerNodePresentation('assistant-step', 'reasoning')).toEqual({
+      surface: 'disclosure',
+      defaultOpen: false,
+    })
+    expect(innerNodePresentation('assistant-step', 'text')).toEqual({
+      surface: 'content',
+    })
+  })
+
+  it('uses the same title and summary shape as the stock tool row', () => {
+    expect(innerToolPresentation('bash', JSON.stringify({
+      command: 'sleep 8',
+      description: 'Wait eight seconds in foreground',
+    }))).toEqual(expect.objectContaining({
+      variant: 'bash',
+      title: 'Bash',
+      summary: 'Wait eight seconds in foreground',
+    }))
+    expect(innerToolPresentation('custom_tool', '{"value":"demo"}')).toEqual(expect.objectContaining({
+      variant: 'others',
+      title: 'Tool call',
+      summary: 'custom_tool · demo',
+    }))
   })
 })
 
