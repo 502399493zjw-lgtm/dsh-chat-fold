@@ -1,7 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
 import type { ChatConversationViewNode } from '@deepseek-ai/dsh-client-runtime/client'
-import { apply, assistantBlocksForDisplay, contentText, foldableTurns } from '../src/client/view.tsx'
+import {
+  apply,
+  assistantBlocksForDisplay,
+  contentText,
+  disclosureOpenAfterStatus,
+  foldableTurns,
+} from '../src/client/view.tsx'
 
 vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => ({
   JsonBlock: () => null,
@@ -51,9 +57,40 @@ describe('folded conversation projection', () => {
     expect(turn?.reasoningKey).toBe('answer')
     expect(turn?.finalKey).toBe('answer')
     expect(turn?.tailKey).toBe('tail')
+    expect(turn?.complete).toBe(true)
     expect(nodes.get(turn?.processKeys[1] ?? '')?.data).toEqual(
       expect.objectContaining({ content: expect.stringContaining('available_skills') }),
     )
+  })
+
+  it('projects an in-flight turn before its final answer exists', () => {
+    const entries = [
+      node('user', 'user', { content: 'inspect the project' }),
+      node('context', 'context', { content: 'Current runtime context.' }),
+      node('tool', 'tool-call', { root: { name: 'Bash', status: 'running' } }),
+      node('draft', 'assistant-step', {
+        status: 'running',
+        blocks: [{ kind: 'reasoning', text: 'Waiting for the command.' }],
+      }),
+    ]
+    const nodes = new Map(entries.map(entry => [entry.key, entry]))
+
+    const turn = foldableTurns(entries.map(entry => entry.key), nodes).get(1)
+
+    expect(turn).toEqual(expect.objectContaining({
+      complete: false,
+      retainedKeys: ['user'],
+      processKeys: ['context', 'tool', 'draft'],
+      reasoningKey: undefined,
+      finalKey: undefined,
+      tailKey: undefined,
+    }))
+  })
+
+  it('auto-opens while running, auto-closes on completion, then preserves a manual choice', () => {
+    expect(disclosureOpenAfterStatus(false, false, true)).toBe(true)
+    expect(disclosureOpenAfterStatus(true, true, false)).toBe(false)
+    expect(disclosureOpenAfterStatus(true, false, false)).toBe(true)
   })
 
   it('keeps the complete context text instead of reducing it to a nested disclosure label', () => {

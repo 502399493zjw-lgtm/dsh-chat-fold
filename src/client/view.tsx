@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { Context } from '@deepseek-ai/cordis'
 import type {
   ChatConversationViewNode,
@@ -7,7 +7,12 @@ import type {
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type { ConvViewProps } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { InjectFace, PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
-import { MarkdownText, MessageText } from '@deepseek-ai/dsh-client-ui-primitives'
+import {
+  DisclosureRow,
+  IconThinkOutline14,
+  MarkdownText,
+  MessageText,
+} from '@deepseek-ai/dsh-client-ui-primitives'
 import { en, NS, zh } from '../locales.ts'
 import css from '../ExecutionFoldView.module.css'
 
@@ -27,8 +32,9 @@ export interface FoldableTurn {
   readonly retainedKeys: readonly string[]
   readonly processKeys: readonly string[]
   readonly reasoningKey: string | undefined
-  readonly finalKey: string
-  readonly tailKey: string
+  readonly finalKey: string | undefined
+  readonly tailKey: string | undefined
+  readonly complete: boolean
 }
 
 type NodeStore = { get: (key: string) => ChatConversationViewNode | undefined }
@@ -68,9 +74,10 @@ function hasReasoning(node: ChatConversationViewNode | undefined): boolean {
 }
 
 /**
- * Closed turns collapse presentation only. Every hidden key still points to
- * the original immutable conversation node, so opening the disclosure can
- * dispatch the stock renderer with the full payload.
+ * Turns become foldable as soon as execution content exists. Every hidden key
+ * still points to the original immutable conversation node; a running group
+ * can therefore stay open while it streams and become the same completed
+ * group without remounting when its final answer arrives.
  */
 export function foldableTurns(order: readonly string[], nodes: NodeStore): ReadonlyMap<number, FoldableTurn> {
   const grouped = new Map<number, string[]>()
@@ -89,10 +96,11 @@ export function foldableTurns(order: readonly string[], nodes: NodeStore): Reado
     const executionKeys = keys.filter(key => !isUserNode(nodes.get(key)))
     const tailKey = executionKeys.findLast(key => nodes.get(key)?.kind === 'turn-tail')
     const finalKey = executionKeys.findLast(key => hasFinalText(nodes.get(key)))
-    if (tailKey === undefined || finalKey === undefined) continue
-
-    const processKeys = executionKeys.filter(key => key !== finalKey && key !== tailKey)
-    const reasoningKey = hasReasoning(nodes.get(finalKey)) ? finalKey : undefined
+    const complete = tailKey !== undefined && finalKey !== undefined
+    const processKeys = complete
+      ? executionKeys.filter(key => key !== finalKey && key !== tailKey)
+      : executionKeys.filter(key => key !== tailKey)
+    const reasoningKey = complete && hasReasoning(nodes.get(finalKey)) ? finalKey : undefined
     if (processKeys.length === 0 && reasoningKey === undefined) continue
     result.set(turn, {
       turn,
@@ -102,9 +110,24 @@ export function foldableTurns(order: readonly string[], nodes: NodeStore): Reado
       reasoningKey,
       finalKey,
       tailKey,
+      complete,
     })
   }
   return result
+}
+
+/**
+ * Derive the disclosure state at a run-status boundary. Running owns the
+ * disclosure; after the run ends, a settled manual choice owns it again.
+ */
+export function disclosureOpenAfterStatus(
+  currentOpen: boolean,
+  wasRunning: boolean,
+  running: boolean,
+): boolean {
+  if (running) return true
+  if (wasRunning) return false
+  return currentOpen
 }
 
 /** Preserve every text block; non-text blocks remain visible through the raw fallback. */
@@ -153,6 +176,54 @@ function blocksOf(node: ChatConversationViewNode, mode: RenderMode) {
 
 function ProcessLabel({ children }: { readonly children: ReactNode }) {
   return <div className={css.processLabel}>{children}</div>
+}
+
+function ExecutionDisclosure({
+  running,
+  count,
+  t,
+  children,
+}: {
+  readonly running: boolean
+  readonly count: number
+  readonly t: FoldProps['t']
+  readonly children: ReactNode
+}) {
+  const [open, setOpen] = useState(running)
+  const wasRunning = useRef(running)
+
+  useEffect(() => {
+    setOpen(current => disclosureOpenAfterStatus(current, wasRunning.current, running))
+    wasRunning.current = running
+  }, [running])
+
+  return (
+    <div className={css.process} data-open={open || undefined} data-running={running || undefined}>
+      <DisclosureRow
+        rowClassName={css.summary}
+        leadingClassName={css.summaryLeading}
+        chevronClassName={css.summaryChevron}
+        titleClassName={css.summaryTitle}
+        icon={<IconThinkOutline14 size={14} />}
+        title={running ? t('execution.running') : t('execution.process')}
+        open={open}
+        expandable
+        expandOnRowClick
+        keepContentWhenOpen
+        onToggle={() => { setOpen(value => !value) }}
+        collapsedContent={running ? (
+          <span className={css.runningDot} aria-hidden />
+        ) : (
+          <span className={css.processCount}>{count}</span>
+        )}
+      />
+      <div className={css.processBody} aria-hidden={!open}>
+        <div className={css.processBodyInner}>
+          <div className={css.items}>{children}</div>
+        </div>
+      </div>
+    </div>
+  )
 }
 
 function AssistantNode({ node, mode, t }: {
@@ -256,6 +327,15 @@ function FoldedChatView({
   const loadingOlder = useSession(snapshot => snapshot.loadingOlder)
   const running = useSession(snapshot => snapshot.running)
   const folded = useMemo(() => foldableTurns(order, nodes), [order, nodes])
+  const latestTurn = useMemo(() => {
+    let latest: number | undefined
+    for (const key of order) {
+      const source = nodes.get(key)
+      const candidate = source === undefined ? undefined : turnOf(source)
+      if (candidate !== undefined) latest = candidate
+    }
+    return latest
+  }, [order, nodes])
 
   const renderNode = (key: string, mode: RenderMode = 'all'): ReactNode => {
     const source = nodes.get(key)
@@ -288,20 +368,18 @@ function FoldedChatView({
     rows.push(
       <section className={css.turn} key={`turn-${group.turn}`} data-execution-fold-turn={group.turn}>
         {group.retainedKeys.map(key => <div key={key}>{renderNode(key)}</div>)}
-        <details className={css.process} open={running && turn === group.turn}>
-          <summary className={css.summary}>
-            <span className={css.chevron} aria-hidden />
-            <span>{running ? t('execution.running') : t('execution.processCount', { count: processCount })}</span>
-          </summary>
-          <div className={css.items}>
+        <ExecutionDisclosure
+          running={running && latestTurn === group.turn}
+          count={processCount}
+          t={t}
+        >
             {group.processKeys.map(key => <div key={key}>{renderNode(key)}</div>)}
             {group.reasoningKey !== undefined && (
               <div key={`${group.reasoningKey}-reasoning`}>{renderNode(group.reasoningKey, 'reasoning')}</div>
             )}
-          </div>
-        </details>
-        {renderNode(group.finalKey, 'answer')}
-        {renderNode(group.tailKey)}
+        </ExecutionDisclosure>
+        {group.finalKey !== undefined && renderNode(group.finalKey, 'answer')}
+        {group.tailKey !== undefined && renderNode(group.tailKey)}
       </section>,
     )
   }
