@@ -1,9 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
 import type { ChatConversationViewNode } from '@deepseek-ai/dsh-client-runtime/client'
-import { apply, turnsOf } from '../src/client/view.tsx'
+import { apply, expandNestedContext, foldableTurns } from '../src/client/view.tsx'
 
 vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => ({
+  JsonBlock: () => null,
   MarkdownText: () => null,
 }))
 
@@ -21,30 +22,63 @@ function node(
 }
 
 describe('folded conversation projection', () => {
-  it('keeps only user-authored text visible and folds internal context metadata', () => {
+  it('keeps every execution node available for native rendering when expanded', () => {
     const entries = [
       node('user', 'user', { content: 'tell me what is on my desktop' }),
       node('steering', 'steering', { content: 'The approval policy changed from ask to never.' }),
       node('context', 'context', { content: 'Current runtime context. <available_skills>secret</available_skills>' }),
-      node('tool', 'tool', { root: { name: 'desktop.list' } }),
-      node('answer', 'assistant-step', { blocks: [{ kind: 'text', text: 'There are three files.' }] }),
+      node('think', 'assistant-step', {
+        status: 'settled',
+        blocks: [{ kind: 'reasoning', text: 'I should inspect the desktop.' }],
+      }),
+      node('tool', 'tool-call', { root: { name: 'desktop.list' } }),
+      node('answer', 'assistant-step', {
+        status: 'settled',
+        finalNode: { seq: 6 },
+        blocks: [
+          { kind: 'reasoning', text: 'The listing contains three entries.' },
+          { kind: 'text', text: 'There are three files.' },
+        ],
+      }),
+      node('tail', 'turn-tail', { turn: 1, seq: 6 }),
     ]
     const nodes = new Map(entries.map(entry => [entry.key, entry]))
 
-    const [turn] = turnsOf(entries.map(entry => entry.key), nodes)
+    const turn = foldableTurns(entries.map(entry => entry.key), nodes).get(1)
 
-    expect(turn?.visible.map(entry => entry.kind)).toEqual(['user'])
-    expect(turn?.visible.map(entry => entry.data)).not.toContainEqual(
+    expect(turn?.retainedKeys).toEqual(['user'])
+    expect(turn?.processKeys).toEqual(['steering', 'context', 'think', 'tool'])
+    expect(turn?.reasoningKey).toBe('answer')
+    expect(turn?.finalKey).toBe('answer')
+    expect(turn?.tailKey).toBe('tail')
+    expect(nodes.get(turn?.processKeys[1] ?? '')?.data).toEqual(
       expect.objectContaining({ content: expect.stringContaining('available_skills') }),
     )
-    expect(turn?.process).toEqual(['steering', 'context', 'tool · desktop.list'])
-    expect(turn?.answer).toBe('There are three files.')
+  })
+
+  it('opens the native context disclosure so the outer fold reveals its body immediately', () => {
+    const click = vi.fn()
+    const root = {
+      querySelector: vi.fn(() => ({ click })),
+    }
+
+    expect(expandNestedContext(root)).toBe(true)
+    expect(root.querySelector).toHaveBeenCalledWith(
+      '[data-disclosure-row][aria-expanded="false"]',
+    )
+    expect(click).toHaveBeenCalledOnce()
   })
 })
 
 describe('conversation view registration', () => {
   it('registers a distinct view id instead of shadowing the built-in chat cell', () => {
-    const registrations: Array<{ name?: string; id?: string; order?: number; priority?: number }> = []
+    const registrations: Array<{
+      name?: string
+      id?: string
+      order?: number
+      priority?: number
+      children?: Record<string, { kind?: string; scope?: string }>
+    }> = []
     const ctx = {
       effect(callback: () => void) { callback() },
       locale: {
@@ -53,7 +87,13 @@ describe('conversation view registration', () => {
       },
       slots: {
         inject(_name: string, callback: () => void) { callback() },
-        register(definition: { name?: string; id?: string; order?: number; priority?: number }) {
+        register(definition: {
+          name?: string
+          id?: string
+          order?: number
+          priority?: number
+          children?: Record<string, { kind?: string; scope?: string }>
+        }) {
           registrations.push(definition)
         },
       },
@@ -65,6 +105,9 @@ describe('conversation view registration', () => {
     expect(registrations).toContainEqual(expect.objectContaining({
       name: 'conversation.view',
       id: 'folded-chat',
+      children: expect.objectContaining({
+        'conversation.chat.node': expect.objectContaining({ kind: 'keyed', scope: 'session' }),
+      }),
     }))
     expect(registrations).not.toContainEqual(expect.objectContaining({
       name: 'conversation.view',

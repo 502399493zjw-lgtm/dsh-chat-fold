@@ -5,10 +5,10 @@ verified against stock DSH `0.1.0-rc.7`.
 
 After installation, the plugin adds a separate **Folded chat** tab and keeps
 the built-in **Chat** tab intact. User messages and the final assistant answer
-stay visible; tool/command steps, steering events, runtime context and
-assistant think/reasoning are represented only by short labels inside an
-`Execution process` disclosure. Internal policy and skill payloads are never
-rendered as message text by the folded view.
+stay visible. Opening `Execution process` restores the complete ordered flow:
+steering events, full runtime context, assistant reasoning, tool/command calls,
+and their results. Context bodies open directly instead of adding a second
+nested disclosure.
 
 ## Install
 
