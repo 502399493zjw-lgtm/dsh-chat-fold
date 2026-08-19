@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
 import type { ChatConversationViewNode } from '@deepseek-ai/dsh-client-runtime/client'
-import { apply, contentText, foldableTurns } from '../src/client/view.tsx'
+import { apply, assistantBlocksForDisplay, contentText, foldableTurns } from '../src/client/view.tsx'
 
 vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => ({
   JsonBlock: () => null,
@@ -61,6 +61,19 @@ describe('folded conversation projection', () => {
       { type: 'text', text: 'Current runtime context.' },
       { type: 'text', text: '<available_skills>all entries</available_skills>' },
     ])).toBe('Current runtime context.\n<available_skills>all entries</available_skills>')
+  })
+
+  it('shows conversational assistant content without duplicating tool protocol blocks', () => {
+    const blocks = [
+      { kind: 'reasoning', text: 'I should read the file.' },
+      { kind: 'tool-call', name: 'read', argsRaw: '{"file_path":"demo-note.md"}' },
+      { kind: 'text', text: 'The file describes the folded view.' },
+    ]
+
+    expect(assistantBlocksForDisplay(blocks, 'all')).toEqual([
+      { kind: 'reasoning', text: 'I should read the file.' },
+      { kind: 'text', text: 'The file describes the folded view.' },
+    ])
   })
 })
 

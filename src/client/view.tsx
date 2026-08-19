@@ -33,6 +33,11 @@ export interface FoldableTurn {
 
 type NodeStore = { get: (key: string) => ChatConversationViewNode | undefined }
 type RenderMode = 'all' | 'answer' | 'reasoning'
+type AssistantBlock = {
+  readonly kind?: string
+  readonly text?: unknown
+  readonly [key: string]: unknown
+}
 
 function turnOf(node: ChatConversationViewNode): number | undefined {
   if (node.location.kind === 'turn' || node.location.kind === 'step') return node.location.turn.turn
@@ -124,14 +129,26 @@ function safeJson(value: unknown): string {
   }
 }
 
+/**
+ * Match the stock conversation surface: protocol tool blocks are represented
+ * by their dedicated tool nodes, so repeating their call ids and wire payloads
+ * inside the assistant message would expose transport noise rather than more
+ * conversation content.
+ */
+export function assistantBlocksForDisplay(
+  blocks: readonly AssistantBlock[],
+  mode: RenderMode,
+): readonly AssistantBlock[] {
+  if (mode === 'reasoning') return blocks.filter(block => block.kind === 'reasoning')
+  const conversational = blocks.filter(block => block.kind !== 'tool-call' && block.kind !== 'tool-result')
+  if (mode === 'answer') return conversational.filter(block => block.kind !== 'reasoning')
+  return conversational
+}
+
 function blocksOf(node: ChatConversationViewNode, mode: RenderMode) {
   if (node.kind !== 'assistant-step') return []
-  const blocks = (node.data as {
-    readonly blocks?: readonly { readonly kind?: string; readonly text?: unknown; readonly [key: string]: unknown }[]
-  }).blocks ?? []
-  if (mode === 'reasoning') return blocks.filter(block => block.kind === 'reasoning')
-  if (mode === 'answer') return blocks.filter(block => block.kind !== 'reasoning')
-  return blocks
+  const blocks = (node.data as { readonly blocks?: readonly AssistantBlock[] }).blocks ?? []
+  return assistantBlocksForDisplay(blocks, mode)
 }
 
 function ProcessLabel({ children }: { readonly children: ReactNode }) {
