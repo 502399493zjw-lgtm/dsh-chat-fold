@@ -1,6 +1,6 @@
 import type { TsdownPlugin, UserConfig } from 'tsdown'
 
-const PACKAGE_ID = '@deepseek-ai/dsh-chat-fold'
+const PACKAGE_ID = 'dsh-chat-fold'
 
 const PLATFORM_MODULES = [
   'react',
