@@ -63,7 +63,8 @@
     "prepack": "pnpm run build && pnpm run verify:package"
   },
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "4.0.1",
