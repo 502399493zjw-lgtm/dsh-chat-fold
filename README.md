@@ -29,7 +29,7 @@ component with the untouched native props.
 ## Install
 
 ```bash
-dsh plugin --profile web add dsh-chat-fold@0.1.0-rc.8
+dsh plugin --profile web add dsh-chat-fold@0.1.0-rc.9
 ```
 
 Restart the Web process after installing the package, then reload the browser.

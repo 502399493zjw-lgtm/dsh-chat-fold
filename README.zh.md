@@ -24,7 +24,7 @@ GIF 由 stock DSH `0.1.0-rc.8` 的真实录屏重新编排节奏而成：执行�
 ## 安装
 
 ```bash
-dsh plugin --profile web add dsh-chat-fold@0.1.0-rc.8
+dsh plugin --profile web add dsh-chat-fold@0.1.0-rc.9
 ```
 
 重启 Web 进程并刷新浏览器后生效。如需跟随后续预发布版本，可改装
