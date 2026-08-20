@@ -25,7 +25,7 @@ const client = await readFile(resolve(root, 'lib/client.js'), 'utf8')
 if (!client.includes('window.__ModuleLoader__.load')) {
   throw new Error('lib/client.js is not wrapped as a DSH browser module')
 }
-if (!client.includes('dsh-client-ui-execution-fold')) {
+if (!client.includes('dsh-chat-fold')) {
   throw new Error('lib/client.js does not contain the plugin module id')
 }
 

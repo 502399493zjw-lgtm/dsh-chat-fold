@@ -1,5 +1,5 @@
 {
-  "name": "@deepseek-ai/dsh-client-ui-execution-fold",
+  "name": "@deepseek-ai/dsh-chat-fold",
   "version": "0.1.0-rc.8",
   "description": "Optional DSH Web bundle that adds per-turn execution folding to the stock Chat view",
   "type": "module",
@@ -28,6 +28,14 @@
     "README.zh.md"
   ],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/502399493zjw-lgtm/dsh-chat-fold.git"
+  },
+  "bugs": {
+    "url": "https://github.com/502399493zjw-lgtm/dsh-chat-fold/issues"
+  },
+  "homepage": "https://github.com/502399493zjw-lgtm/dsh-chat-fold#readme",
   "engines": {
     "node": "^22.19.0 || >=24.0.0"
   },

@@ -1,4 +1,4 @@
-# `@deepseek-ai/dsh-client-ui-execution-fold`
+# `@deepseek-ai/dsh-chat-fold`
 
 给 stock DSH“对话”视图增加逐轮执行折叠能力的可选 Web 插件，固定兼容
 stock DSH `0.1.0-rc.8`。
@@ -24,7 +24,7 @@ GIF 由 stock DSH `0.1.0-rc.8` 的真实录屏重新编排节奏而成：执行�
 ## 安装
 
 ```bash
-dsh plugin --profile web add /绝对路径/dsh-client-ui-execution-fold
+dsh plugin --profile web add /绝对路径/dsh-chat-fold
 ```
 
 重启 Web 进程并刷新浏览器后生效。以后发布到 npm 后，也可以把路径替换为包名。
@@ -32,7 +32,7 @@ dsh plugin --profile web add /绝对路径/dsh-client-ui-execution-fold
 ## 卸载
 
 ```bash
-dsh plugin --profile web remove @deepseek-ai/dsh-client-ui-execution-fold
+dsh plugin --profile web remove @deepseek-ai/dsh-chat-fold
 ```
 
 重启 Web 进程并刷新浏览器后生效。卸载插件后会恢复原始“对话”实现。

@@ -1,4 +1,4 @@
-# `@deepseek-ai/dsh-client-ui-execution-fold`
+# `@deepseek-ai/dsh-chat-fold`
 
 Optional DSH Web bundle that adds per-turn execution folding to the stock Chat
 view. It is pinned to stock DSH `0.1.0-rc.8`.
@@ -29,7 +29,7 @@ component with the untouched native props.
 ## Install
 
 ```bash
-dsh plugin --profile web add /absolute/path/to/dsh-client-ui-execution-fold
+dsh plugin --profile web add /absolute/path/to/dsh-chat-fold
 ```
 
 Restart the Web process after installing the package, then reload the browser.
@@ -38,7 +38,7 @@ The package can later be published and installed by its npm name instead.
 ## Remove
 
 ```bash
-dsh plugin --profile web remove @deepseek-ai/dsh-client-ui-execution-fold
+dsh plugin --profile web remove @deepseek-ai/dsh-chat-fold
 ```
 
 Restart the Web process and reload the browser. Removing the plugin restores

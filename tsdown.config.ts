@@ -1,6 +1,6 @@
 import type { TsdownPlugin, UserConfig } from 'tsdown'
 
-const PACKAGE_ID = '@deepseek-ai/dsh-client-ui-execution-fold'
+const PACKAGE_ID = '@deepseek-ai/dsh-chat-fold'
 
 const PLATFORM_MODULES = [
   'react',
@@ -18,7 +18,7 @@ function isPlatformModule(id: string): boolean {
 
 function inlineClientCss(): TsdownPlugin {
   return {
-    name: 'dsh-client-ui-execution-fold:inline-client-css',
+    name: 'dsh-chat-fold:inline-client-css',
     generateBundle: {
       order: 'post',
       handler(_options, bundle) {
