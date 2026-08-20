@@ -10,6 +10,7 @@ const requiredFiles = [
   'lib/types/index.d.ts',
   'lib/types/client/index.d.ts',
   'cordis.patch.yml',
+  'LICENSE',
 ]
 
 await Promise.all(requiredFiles.map(file => access(resolve(root, file))))
@@ -19,6 +20,12 @@ if (packageJson.dsh?.bundle?.patch !== './cordis.patch.yml') {
 }
 if (packageJson.exports?.['./client']?.default !== './lib/client.js') {
   throw new Error('package.json must export the browser entry')
+}
+if (!packageJson.files?.includes('LICENSE')) {
+  throw new Error('package.json files must include LICENSE')
+}
+if (packageJson.files?.some(file => file.endsWith('.map'))) {
+  throw new Error('published files must not include source maps')
 }
 
 const client = await readFile(resolve(root, 'lib/client.js'), 'utf8')

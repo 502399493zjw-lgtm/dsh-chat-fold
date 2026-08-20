@@ -24,10 +24,14 @@ GIF 由 stock DSH `0.1.0-rc.8` 的真实录屏重新编排节奏而成：执行�
 ## 安装
 
 ```bash
-dsh plugin --profile web add dsh-chat-fold@next
+dsh plugin --profile web add dsh-chat-fold@0.1.0-rc.8
 ```
 
-重启 Web 进程并刷新浏览器后生效。预发布版本使用 npm 的 `next` dist-tag。
+重启 Web 进程并刷新浏览器后生效。如需跟随后续预发布版本，可改装
+`dsh-chat-fold@next`。
+
+本插件依赖 rc.8 内部的 Chat 注册结构。升级 DSH 前必须重新执行 tarball smoke
+和交互测试；不能根据包名或 npm tag 推断它兼容更高版本。
 
 ## 卸载
 
@@ -36,3 +40,21 @@ dsh plugin --profile web remove dsh-chat-fold
 ```
 
 重启 Web 进程并刷新浏览器后生效。卸载插件后会恢复原始“对话”实现。
+
+## 开发验证
+
+```bash
+pnpm install
+pnpm test
+pnpm run check
+pnpm run build
+pnpm run verify:package
+pnpm pack
+```
+
+`verify:package` 只检查构建后的包边界。对外声明兼容前，还必须把 tarball 安装到
+隔离的 stock DSH `0.1.0-rc.8` profile，并实际操作被包装的 Chat 条目。
+
+## 许可证
+
+MIT
