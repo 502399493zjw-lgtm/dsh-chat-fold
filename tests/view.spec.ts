@@ -3,18 +3,16 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { ChatConversationViewNode } from '@deepseek-ai/dsh-client-runtime/client'
 import {
   apply,
-  assistantBlocksForDisplay,
-  contentText,
   disclosureOpenAfterStatus,
+  executionProcessCount,
+  executionProcessLabel,
   foldableTurns,
-  innerNodePresentation,
-  innerToolPresentation,
-  reasoningSummary,
+  projectAssistantNode,
 } from '../src/client/view.tsx'
 
 vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => ({
+  IconChevronRightOutline14: () => null,
   JsonBlock: () => null,
-  MarkdownText: () => null,
 }))
 
 function node(
@@ -60,7 +58,9 @@ describe('folded conversation projection', () => {
     expect(turn?.reasoningKey).toBe('answer')
     expect(turn?.finalKey).toBe('answer')
     expect(turn?.tailKey).toBe('tail')
+    expect(turn?.anchorKey).toBe('steering')
     expect(turn?.complete).toBe(true)
+    expect(turn === undefined ? 0 : executionProcessCount(turn)).toBe(5)
     expect(nodes.get(turn?.processKeys[1] ?? '')?.data).toEqual(
       expect.objectContaining({ content: expect.stringContaining('available_skills') }),
     )
@@ -96,113 +96,92 @@ describe('folded conversation projection', () => {
     expect(disclosureOpenAfterStatus(true, false, false)).toBe(true)
   })
 
-  it('keeps the complete context text instead of reducing it to a nested disclosure label', () => {
-    expect(contentText([
-      { type: 'text', text: 'Current runtime context.' },
-      { type: 'text', text: '<available_skills>all entries</available_skills>' },
-    ])).toBe('Current runtime context.\n<available_skills>all entries</available_skills>')
+  it('formats the complete process label with the localized step unit', () => {
+    const t = (key: string, params?: Record<string, unknown>) => key === 'execution.processCount'
+      ? `执行过程 · ${String(params?.count)} 步`
+      : key
+
+    expect(executionProcessLabel(t, 3)).toBe('执行过程 · 3 步')
   })
 
-  it('shows conversational assistant content without duplicating tool protocol blocks', () => {
-    const blocks = [
-      { kind: 'reasoning', text: 'I should read the file.' },
-      { kind: 'tool-call', name: 'read', argsRaw: '{"file_path":"demo-note.md"}' },
-      { kind: 'text', text: 'The file describes the folded view.' },
-    ]
+  it('splits a closing assistant through the stock renderer without losing either half', () => {
+    const source = node('answer', 'assistant-step', {
+      status: 'settled',
+      finalNode: { seq: 6 },
+      blocks: [
+        { kind: 'reasoning', text: 'Inspect the result.' },
+        { kind: 'text', text: 'There are three files.' },
+      ],
+    })
 
-    expect(assistantBlocksForDisplay(blocks, 'all')).toEqual([
-      { kind: 'reasoning', text: 'I should read the file.' },
-      { kind: 'text', text: 'The file describes the folded view.' },
-    ])
-  })
-
-  it('keeps native inner execution rows collapsed when the outer process opens', () => {
-    expect(innerNodePresentation('context')).toEqual({
-      surface: 'disclosure',
-      defaultOpen: false,
-    })
-    expect(innerNodePresentation('tool-call')).toEqual({
-      surface: 'disclosure',
-      defaultOpen: false,
-    })
-    expect(innerNodePresentation('assistant-step', 'reasoning')).toEqual({
-      surface: 'disclosure',
-      defaultOpen: false,
-    })
-    expect(innerNodePresentation('assistant-step', 'text')).toEqual({
-      surface: 'content',
-    })
-  })
-
-  it('uses the same title and summary shape as the stock tool row', () => {
-    expect(innerToolPresentation('bash', JSON.stringify({
-      command: 'sleep 8',
-      description: 'Wait eight seconds in foreground',
-    }))).toEqual(expect.objectContaining({
-      variant: 'bash',
-      title: 'Bash',
-      summary: 'Wait eight seconds in foreground',
+    expect(projectAssistantNode(source, 'reasoning').data).toEqual(expect.objectContaining({
+      finalNode: undefined,
+      blocks: [{ kind: 'reasoning', text: 'Inspect the result.' }],
     }))
-    expect(innerToolPresentation('custom_tool', '{"value":"demo"}')).toEqual(expect.objectContaining({
-      variant: 'others',
-      title: 'Tool call',
-      summary: 'custom_tool · demo',
+    expect(projectAssistantNode(source, 'answer').data).toEqual(expect.objectContaining({
+      finalNode: { seq: 6 },
+      blocks: [{ kind: 'text', text: 'There are three files.' }],
     }))
-  })
-
-  it('removes an outer Markdown emphasis wrapper from the reasoning summary', () => {
-    expect(reasoningSummary('**Planning foreground sleep execution**\nMore detail.')).toBe(
-      'Planning foreground sleep execution',
-    )
-    expect(reasoningSummary('Keep *inline* emphasis')).toBe('Keep *inline* emphasis')
   })
 })
 
 describe('conversation view registration', () => {
-  it('registers a distinct view without redeclaring the stock chat node slot', () => {
-    const registrations: Array<{
-      name?: string
-      id?: string
-      order?: number
-      priority?: number
-      children?: Record<string, { kind?: string; scope?: string }>
-    }> = []
-    const declaredSlots = new Set(['conversation.chat.node'])
+  it('wraps the one stock chat entry in place without registering another visible tab', () => {
+    const registrations: unknown[] = []
+    let injectedDisposer: (() => void) | undefined
+    const stockStore = { create() {} }
+    const stockInject = () => ({ loadOlder() {} })
+    const StockChat = () => null
+    const stockChatEntry = {
+      component: StockChat,
+      options: { id: 'chat', order: 0, label: '对话', priority: 0 },
+      store: stockStore,
+      inject: stockInject,
+      locale: 'conversation',
+      children: {
+        'conversation.chat.node': { kind: 'keyed', scope: 'session', inject: {} },
+        'conversation.message.images': { kind: 'single', scope: 'session' },
+      },
+    }
+    const slotsService = {
+      inject(_name: string, callback: () => void | (() => void)) {
+        injectedDisposer = callback() ?? undefined
+      },
+      entries() { return [stockChatEntry] },
+      subscribe() { return () => {} },
+      register(...args: unknown[]) {
+        registrations.push(args)
+        return () => {}
+      },
+    }
     const ctx = {
       effect(callback: () => void) { callback() },
       locale: {
         register() {},
-        bind() { return (key: string) => key },
-      },
-      slots: {
-        inject(_name: string, callback: () => void) { callback() },
-        register(definition: {
-          name?: string
-          id?: string
-          order?: number
-          priority?: number
-          children?: Record<string, { kind?: string; scope?: string }>
-        }) {
-          for (const child of Object.keys(definition.children ?? {})) {
-            if (declaredSlots.has(child)) throw new Error(`slot "${child}" is already declared`)
-            declaredSlots.add(child)
-          }
-          registrations.push(definition)
+        bind() {
+          if (this !== ctx.locale) throw new TypeError('LocaleService.bind receiver was lost')
+          return (key: string) => key
         },
+        subscribe() { return () => {} },
+        getSnapshot() { return { revision: 0 } },
       },
+      slots: slotsService,
       sessions: { binding() { return undefined } },
     } as unknown as Context
 
     apply(ctx)
 
-    expect(registrations).toContainEqual(expect.objectContaining({
-      name: 'conversation.view',
-      id: 'folded-chat',
-    }))
-    expect(registrations.find(entry => entry.id === 'folded-chat')?.children).toBeUndefined()
-    expect(registrations).not.toContainEqual(expect.objectContaining({
-      name: 'conversation.view',
-      id: 'chat',
-    }))
+    expect(registrations).toEqual([])
+    expect(stockChatEntry.component).not.toBe(StockChat)
+    expect(stockChatEntry.options).toEqual({ id: 'chat', order: 0, label: '对话', priority: 0 })
+    expect(stockChatEntry.store).toBe(stockStore)
+    expect(stockChatEntry.children).toHaveProperty('conversation.chat.node')
+    const injected = stockChatEntry.inject('session-1', {})
+    expect(injected?.nativeChat).toBe(StockChat)
+    expect(injected?.foldT).toBeTypeOf('function')
+
+    injectedDisposer?.()
+    expect(stockChatEntry.component).toBe(StockChat)
+    expect(stockChatEntry.inject).toBe(stockInject)
   })
 })

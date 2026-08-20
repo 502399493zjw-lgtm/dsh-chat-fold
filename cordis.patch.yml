@@ -1,6 +1,6 @@
-# Optional Web composition layer. The plugin contributes a distinct
-# `folded-chat` conversation tab and leaves stock DSH's built-in `chat` entry
-# untouched. Removing the bundle removes only the extra tab.
+# Optional Web composition layer. The browser entry wraps stock DSH rc.8's one
+# existing `chat` entry in place and adds only per-turn execution folding.
+# Removing the bundle restores the untouched entry.
 - insert:
     - id: ui-execution-fold
       name: '@deepseek-ai/dsh-client-ui-execution-fold'
