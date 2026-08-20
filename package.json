@@ -1,5 +1,5 @@
 {
-  "name": "@deepseek-ai/dsh-chat-fold",
+  "name": "dsh-chat-fold",
   "version": "0.1.0-rc.8",
   "description": "Optional DSH Web bundle that adds per-turn execution folding to the stock Chat view",
   "type": "module",

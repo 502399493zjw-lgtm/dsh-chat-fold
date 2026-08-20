@@ -3,4 +3,4 @@
 # Removing the bundle restores the untouched entry.
 - insert:
     - id: ui-execution-fold
-      name: '@deepseek-ai/dsh-chat-fold'
+      name: 'dsh-chat-fold'
