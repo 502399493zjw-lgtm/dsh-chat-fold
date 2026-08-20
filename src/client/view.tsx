@@ -1,23 +1,31 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import {
+  Component,
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentType,
+  type ReactNode,
+} from 'react'
 import type { Context } from '@deepseek-ai/cordis'
 import type {
   ChatConversationViewNode,
-  SessionId,
 } from '@deepseek-ai/dsh-client-runtime/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
-import type { ConvViewProps } from '@deepseek-ai/dsh-client-ui-conversation/client'
-import type { InjectFace, PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
+import type {
+  ChatViewSlotProps,
+} from '@deepseek-ai/dsh-client-ui-conversation/client'
+import type {
+  InjectFace,
+  StoredEntry,
+  Translate,
+  TranslateNS,
+} from '@deepseek-ai/dsh-client-ui-slots'
 import {
-  DisclosureRow,
-  IconApiOutline14,
-  IconBrowseOutline16,
-  IconCodeOutline16,
-  IconEditOutline16,
-  IconSearchOutline16,
-  IconSparkle16,
-  IconThinkOutline14,
-  MarkdownText,
-  MessageText,
+  IconChevronRightOutline14,
+  JsonBlock,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { en, NS, zh } from '../locales.ts'
 import css from '../ExecutionFoldView.module.css'
@@ -25,129 +33,35 @@ import css from '../ExecutionFoldView.module.css'
 export const inject = ['slots', 'sessions', 'locale']
 
 interface FoldInjected {
-  readonly loadOlder: () => void
+  readonly foldT: TranslateNS<typeof NS>
+  readonly nativeChat: ComponentType<ChatViewSlotProps>
 }
 
-type FoldProps = ConvViewProps
-  & InjectFace<FoldInjected>
-  & PropsLocale<typeof NS>
+type FoldProps = ChatViewSlotProps & InjectFace<FoldInjected>
+interface MirrorRenderOptions {
+  readonly entryKey?: string
+  readonly hookContext?: unknown
+  readonly fallback?: ReactNode
+  readonly only?: string
+  readonly overlay?: boolean
+}
+type MirroredRenderSlot = (key: string, owner: object, options?: MirrorRenderOptions) => ReactNode
 
 export interface FoldableTurn {
   readonly turn: number
   readonly keys: readonly string[]
   readonly retainedKeys: readonly string[]
   readonly processKeys: readonly string[]
+  /** A completed final assistant node whose reasoning is projected into the process group. */
   readonly reasoningKey: string | undefined
   readonly finalKey: string | undefined
   readonly tailKey: string | undefined
+  readonly anchorKey: string
   readonly complete: boolean
 }
 
 type NodeStore = { get: (key: string) => ChatConversationViewNode | undefined }
-type RenderMode = 'all' | 'answer' | 'reasoning'
-type AssistantBlock = {
-  readonly kind?: string
-  readonly text?: unknown
-  readonly [key: string]: unknown
-}
-
-export type InnerNodePresentation =
-  | { readonly surface: 'disclosure'; readonly defaultOpen: false }
-  | { readonly surface: 'content' }
-
-/**
- * The folded view owns only the outer execution group. Inside that group the
- * same categories that are disclosures in the stock chat remain disclosures,
- * and each mounts closed just like its stock counterpart.
- */
-export function innerNodePresentation(
-  nodeKind: string,
-  blockKind?: string,
-): InnerNodePresentation {
-  if (nodeKind === 'context' || nodeKind === 'tool-call' || nodeKind === 'tool') {
-    return { surface: 'disclosure', defaultOpen: false }
-  }
-  if (nodeKind === 'assistant-step' && blockKind === 'reasoning') {
-    return { surface: 'disclosure', defaultOpen: false }
-  }
-  return { surface: 'content' }
-}
-
-export type InnerToolVariant = 'search' | 'read' | 'bash' | 'write' | 'edit' | 'code' | 'others'
-
-export interface InnerToolPresentation {
-  readonly variant: InnerToolVariant
-  readonly title: string
-  readonly summary: string
-  readonly body: string | null
-}
-
-const TOOL_VARIANTS: Readonly<Record<string, InnerToolVariant>> = {
-  bash: 'bash',
-  pwsh: 'bash',
-  read: 'read',
-  web_fetch: 'read',
-  web_search: 'search',
-  grep: 'search',
-  glob: 'search',
-  write: 'write',
-  edit: 'edit',
-  run_code: 'code',
-}
-
-const TOOL_TITLES: Readonly<Record<InnerToolVariant, string>> = {
-  search: 'Search',
-  read: 'Read',
-  bash: 'Bash',
-  write: 'Write',
-  edit: 'Edit',
-  code: 'Code',
-  others: 'Tool call',
-}
-
-const TOOL_SUMMARY_KEYS: Readonly<Record<InnerToolVariant, readonly string[]>> = {
-  bash: ['description', 'command'],
-  read: ['path', 'file_path', 'url'],
-  search: ['query', 'pattern', 'url'],
-  write: ['path', 'file_path'],
-  edit: ['path', 'file_path'],
-  code: ['description'],
-  others: [],
-}
-
-/** Match the stock generic Tool row's classification, title and summary. */
-export function innerToolPresentation(name: string, argsRaw?: string): InnerToolPresentation {
-  const variant = TOOL_VARIANTS[name] ?? 'others'
-  let parsed: unknown
-  if (argsRaw !== undefined) {
-    try {
-      parsed = JSON.parse(argsRaw) as unknown
-    } catch {
-      parsed = undefined
-    }
-  }
-  let base = argsRaw === undefined ? '' : firstLine(argsRaw)
-  if (typeof parsed === 'object' && parsed !== null) {
-    const args = parsed as Record<string, unknown>
-    const preferred = TOOL_SUMMARY_KEYS[variant]
-      .map(key => args[key])
-      .find(value => typeof value === 'string' && value !== '')
-    const fallback = Object.values(args).find(value => typeof value === 'string' && value !== '')
-    const picked = preferred ?? fallback
-    if (typeof picked === 'string') base = firstLine(picked)
-  }
-  const summary = variant === 'others' && name !== ''
-    ? `${name}${base === '' ? '' : ` · ${base}`}`
-    : base
-  return {
-    variant,
-    title: name === 'pwsh' ? 'Pwsh' : TOOL_TITLES[variant],
-    summary,
-    body: argsRaw === undefined
-      ? null
-      : parsed === undefined ? argsRaw : JSON.stringify(parsed, null, 2),
-  }
-}
+type AssistantProjection = 'reasoning' | 'answer'
 
 function turnOf(node: ChatConversationViewNode): number | undefined {
   if (node.location.kind === 'turn' || node.location.kind === 'step') return node.location.turn.turn
@@ -158,30 +72,60 @@ function isUserNode(node: ChatConversationViewNode | undefined): boolean {
   return node?.kind === 'user'
 }
 
+function assistantBlocks(node: ChatConversationViewNode): readonly { readonly kind?: string; readonly text?: unknown }[] {
+  if (node.kind !== 'assistant-step') return []
+  return (node.data as {
+    readonly blocks?: readonly { readonly kind?: string; readonly text?: unknown }[]
+  }).blocks ?? []
+}
+
 function hasFinalText(node: ChatConversationViewNode | undefined): boolean {
   if (node?.kind !== 'assistant-step') return false
   const data = node.data as {
     readonly status?: string
     readonly finalNode?: unknown
-    readonly blocks?: readonly { readonly kind?: string; readonly text?: unknown }[]
   }
   return data.status !== 'running'
     && data.finalNode !== undefined
-    && (data.blocks ?? []).some(block => block.kind === 'text'
+    && assistantBlocks(node).some(block => block.kind === 'text'
       && typeof block.text === 'string' && block.text.trim() !== '')
 }
 
 function hasReasoning(node: ChatConversationViewNode | undefined): boolean {
-  if (node?.kind !== 'assistant-step') return false
-  const blocks = (node.data as { readonly blocks?: readonly { readonly kind?: string }[] }).blocks ?? []
-  return blocks.some(block => block.kind === 'reasoning')
+  return node !== undefined && assistantBlocks(node).some(block => block.kind === 'reasoning')
 }
 
 /**
- * Turns become foldable as soon as execution content exists. Every hidden key
- * still points to the original immutable conversation node; a running group
- * can therefore stay open while it streams and become the same completed
- * group without remounting when its final answer arrives.
+ * Split only the final assistant node at the native renderer boundary. Both
+ * halves still pass through DSH's stock Assistant renderer: Think stays in
+ * the execution disclosure, while the answer keeps its native message chrome.
+ */
+export function projectAssistantNode(
+  node: ChatConversationViewNode,
+  projection: AssistantProjection,
+): ChatConversationViewNode {
+  if (node.kind !== 'assistant-step') return node
+  const data = node.data as Record<string, unknown> & {
+    readonly blocks?: readonly { readonly kind?: string }[]
+  }
+  const blocks = (data.blocks ?? []).filter(block => (
+    projection === 'reasoning' ? block.kind === 'reasoning' : block.kind !== 'reasoning'
+  ))
+  return {
+    ...node,
+    data: {
+      ...data,
+      blocks,
+      // The process-only half must not acquire final-answer actions or file mentions.
+      ...(projection === 'reasoning' ? { finalNode: undefined } : {}),
+    },
+  } as ChatConversationViewNode
+}
+
+/**
+ * Group the immutable rc.8 chat projection without replacing any business
+ * renderer. User and final-answer rows remain in the stock flow; everything
+ * between them is available to the outer process disclosure.
  */
 export function foldableTurns(order: readonly string[], nodes: NodeStore): ReadonlyMap<number, FoldableTurn> {
   const grouped = new Map<number, string[]>()
@@ -205,7 +149,8 @@ export function foldableTurns(order: readonly string[], nodes: NodeStore): Reado
       ? executionKeys.filter(key => key !== finalKey && key !== tailKey)
       : executionKeys.filter(key => key !== tailKey)
     const reasoningKey = complete && hasReasoning(nodes.get(finalKey)) ? finalKey : undefined
-    if (processKeys.length === 0 && reasoningKey === undefined) continue
+    const anchorKey = processKeys[0] ?? reasoningKey
+    if (anchorKey === undefined) continue
     result.set(turn, {
       turn,
       keys,
@@ -214,16 +159,14 @@ export function foldableTurns(order: readonly string[], nodes: NodeStore): Reado
       reasoningKey,
       finalKey,
       tailKey,
+      anchorKey,
       complete,
     })
   }
   return result
 }
 
-/**
- * Derive the disclosure state at a run-status boundary. Running owns the
- * disclosure; after the run ends, a settled manual choice owns it again.
- */
+/** Running owns the disclosure; completion closes it once, then manual state wins. */
 export function disclosureOpenAfterStatus(
   currentOpen: boolean,
   wasRunning: boolean,
@@ -234,397 +177,251 @@ export function disclosureOpenAfterStatus(
   return currentOpen
 }
 
-/** Preserve every text block; non-text blocks remain visible through the raw fallback. */
-export function contentText(value: unknown): string {
-  if (typeof value === 'string') return value
-  if (!Array.isArray(value)) return ''
-  return value.map((item) => {
-    if (typeof item === 'string') return item
-    if (typeof item !== 'object' || item === null) return ''
-    const block = item as { readonly text?: unknown; readonly type?: unknown; readonly kind?: unknown }
-    if (typeof block.text === 'string') return block.text
-    if (block.type === 'image' || block.kind === 'image') return '[image]'
-    return ''
-  }).filter(Boolean).join('\n')
+/** Keep the count and its language-specific unit in one accessible label. */
+export function executionProcessLabel(
+  t: Translate<'execution.processCount'>,
+  count: number,
+): string {
+  return t('execution.processCount', { count })
 }
 
-function safeJson(value: unknown): string {
-  try {
-    return JSON.stringify(value, null, 2) ?? String(value)
-  } catch {
-    return String(value)
-  }
-}
-
-/**
- * Match the stock conversation surface: protocol tool blocks are represented
- * by their dedicated tool nodes, so repeating their call ids and wire payloads
- * inside the assistant message would expose transport noise rather than more
- * conversation content.
- */
-export function assistantBlocksForDisplay(
-  blocks: readonly AssistantBlock[],
-  mode: RenderMode,
-): readonly AssistantBlock[] {
-  if (mode === 'reasoning') return blocks.filter(block => block.kind === 'reasoning')
-  const conversational = blocks.filter(block => block.kind !== 'tool-call' && block.kind !== 'tool-result')
-  if (mode === 'answer') return conversational.filter(block => block.kind !== 'reasoning')
-  return conversational
-}
-
-function blocksOf(node: ChatConversationViewNode, mode: RenderMode) {
-  if (node.kind !== 'assistant-step') return []
-  const blocks = (node.data as { readonly blocks?: readonly AssistantBlock[] }).blocks ?? []
-  return assistantBlocksForDisplay(blocks, mode)
-}
-
-function ProcessLabel({ children }: { readonly children: ReactNode }) {
-  return <div className={css.processLabel}>{children}</div>
-}
-
-function firstLine(text: string): string {
-  const visible = text.trim()
-  const newline = visible.indexOf('\n')
-  return newline === -1 ? visible : visible.slice(0, newline)
-}
-
-/** Keep the stock one-line preview readable when reasoning starts with Markdown emphasis. */
-export function reasoningSummary(text: string): string {
-  return firstLine(text).replace(/^(\*{1,3}|_{1,3}|~~|`{1,3})(.*?)\1$/, '$2')
-}
-
-function InnerExecutionDisclosure({
-  kind,
-  icon,
-  title,
-  summary,
-  bodyClassName,
-  children,
-}: {
-  readonly kind: 'context' | 'reasoning' | 'tool'
-  readonly icon: ReactNode
-  readonly title: string
-  readonly summary?: string | undefined
-  readonly bodyClassName?: string | undefined
-  readonly children: ReactNode
-}) {
-  const presentation = innerNodePresentation(
-    kind === 'reasoning' ? 'assistant-step' : kind === 'tool' ? 'tool-call' : kind,
-    kind === 'reasoning' ? 'reasoning' : undefined,
-  )
-  const [open, setOpen] = useState<boolean>(
-    presentation.surface === 'disclosure' ? presentation.defaultOpen : false,
-  )
-
-  return (
-    <div
-      className={css.innerDisclosure}
-      data-inner-execution-kind={kind}
-      data-open={open || undefined}
-    >
-      <DisclosureRow
-        rowClassName={css.innerRow}
-        leadingClassName={css.innerLeading}
-        chevronClassName={css.innerChevron}
-        titleClassName={css.innerTitle}
-        icon={icon}
-        title={title}
-        open={open}
-        expandable
-        expandOnRowClick
-        keepContentWhenOpen
-        onToggle={() => { setOpen(value => !value) }}
-        collapsedContent={summary === undefined || summary === '' ? undefined : (
-          <>
-            <span className={css.innerSeparator} aria-hidden />
-            <span className={css.innerSummary}>{summary}</span>
-          </>
-        )}
-      >
-        <div className={bodyClassName}>{children}</div>
-      </DisclosureRow>
-    </div>
-  )
+export function executionProcessCount(turn: FoldableTurn): number {
+  return turn.processKeys.length + (turn.reasoningKey === undefined ? 0 : 1)
 }
 
 function ExecutionDisclosure({
+  turn,
   running,
-  count,
   t,
   children,
 }: {
+  readonly turn: FoldableTurn
   readonly running: boolean
-  readonly count: number
-  readonly t: FoldProps['t']
+  readonly t: Translate<'execution.processCount'>
   readonly children: ReactNode
 }) {
   const [open, setOpen] = useState(running)
   const wasRunning = useRef(running)
-
+  const bodyId = useId()
   useEffect(() => {
-    setOpen(current => disclosureOpenAfterStatus(current, wasRunning.current, running))
+    setOpen(value => disclosureOpenAfterStatus(value, wasRunning.current, running))
     wasRunning.current = running
   }, [running])
 
   return (
-    <div className={css.process} data-open={open || undefined} data-running={running || undefined}>
-      <DisclosureRow
-        rowClassName={css.summary}
-        leadingClassName={css.summaryLeading}
-        chevronClassName={css.summaryChevron}
-        titleClassName={css.summaryTitle}
-        icon={<IconThinkOutline14 size={14} />}
-        title={running ? t('execution.running') : t('execution.process')}
-        open={open}
-        expandable
-        expandOnRowClick
-        keepContentWhenOpen
-        onToggle={() => { setOpen(value => !value) }}
-        collapsedContent={running ? (
-          <span className={css.runningDot} aria-hidden />
-        ) : (
-          <span className={css.processCount}>{count}</span>
-        )}
-      />
-      <div className={css.processBody} aria-hidden={!open}>
+    <section className={css.process} data-open={open || undefined} data-execution-fold-turn={turn.turn}>
+      <button
+        type="button"
+        className={css.summary}
+        aria-expanded={open}
+        aria-controls={bodyId}
+        onClick={() => { setOpen(value => !value) }}
+      >
+        <span className={css.summaryLabel}>{executionProcessLabel(t, executionProcessCount(turn))}</span>
+        <IconChevronRightOutline14 className={css.chevron} />
+      </button>
+      <div id={bodyId} className={css.processBody} aria-hidden={!open}>
         <div className={css.processBodyInner}>
           <div className={css.items}>{children}</div>
         </div>
       </div>
-    </div>
+      <div className={css.divider} aria-hidden />
+    </section>
   )
 }
 
-function AssistantNode({ node, mode, t }: {
-  readonly node: ChatConversationViewNode
-  readonly mode: RenderMode
-  readonly t: FoldProps['t']
-}) {
-  return (
-    <div className={mode === 'answer' ? css.answer : css.assistantProcess}>
-      {blocksOf(node, mode).map((block, index) => {
-        if ((block.kind === 'text' || block.kind === 'reasoning') && typeof block.text === 'string') {
-          if (block.kind === 'reasoning') {
-            return (
-              <InnerExecutionDisclosure
-                kind="reasoning"
-                icon={<IconThinkOutline14 size={14} />}
-                title="Think"
-                summary={reasoningSummary(block.text)}
-                bodyClassName={css.reasoningBody}
-                key={index}
-              >
-                {block.text}
-              </InnerExecutionDisclosure>
-            )
-          }
-          return (
-            <div className={css.assistantText} key={index}>
-              <MarkdownText text={block.text} />
-            </div>
-          )
-        }
-        return (
-          <div className={css.rawBlock} key={index}>
-            <ProcessLabel>{block.kind ?? t('node.details')}</ProcessLabel>
-            <pre>{safeJson(block)}</pre>
-          </div>
-        )
-      })}
-    </div>
-  )
-}
-
-function ToolNode({ node, t }: { readonly node: ChatConversationViewNode; readonly t: FoldProps['t'] }) {
-  const root = (node.data as { readonly root?: Record<string, unknown> }).root ?? {}
-  const call = typeof root.call === 'object' && root.call !== null
-    ? root.call as Record<string, unknown>
+function nodeFromOwner(owner: object): ChatConversationViewNode | undefined {
+  const node = (owner as { readonly node?: unknown }).node
+  if (typeof node !== 'object' || node === null) return undefined
+  const candidate = node as Partial<ChatConversationViewNode>
+  return typeof candidate.key === 'string' && typeof candidate.kind === 'string'
+    ? candidate as ChatConversationViewNode
     : undefined
-  const name = typeof root.name === 'string'
-    ? root.name
-    : typeof call?.name === 'string'
-      ? call.name
-      : typeof root.callId === 'string' ? root.callId : t('node.tool')
-  const args = typeof root.argsRaw === 'string'
-    ? root.argsRaw
-    : typeof call?.argsRaw === 'string' ? call.argsRaw : undefined
-  const result = contentText(root.content)
-  const presentation = innerToolPresentation(name, args)
-  const raw = presentation.body ?? safeJson(root)
-  const icon = presentation.variant === 'bash' ? <IconApiOutline14 size={14} />
-    : presentation.variant === 'read' ? <IconBrowseOutline16 size={14} />
-      : presentation.variant === 'search' ? <IconSearchOutline16 size={14} />
-        : presentation.variant === 'write' || presentation.variant === 'edit'
-          ? <IconEditOutline16 size={14} />
-          : presentation.variant === 'others' ? <IconSparkle16 size={14} />
-            : <IconCodeOutline16 size={14} />
+}
+
+function nativeNodeFallback(node: ChatConversationViewNode, t: ChatViewSlotProps['t']): ReactNode {
   return (
-    <InnerExecutionDisclosure
-      kind="tool"
-      icon={icon}
-      title={presentation.title || t('node.tool')}
-      summary={presentation.summary}
-      bodyClassName={css.toolBody}
-    >
-      {raw.trim() !== '' && (
-        <div className={css.ioSection}>
-          <span className={css.ioLabel}>IN</span>
-          <pre>{raw}</pre>
+    <JsonBlock
+      label={t('message.unknownSurface', { type: node.kind })}
+      payload={node.data}
+      truncatedLabel={total => t('json.truncated', { total })}
+    />
+  )
+}
+
+/**
+ * The in-place wrapper calls the exact registered rc.8 Chat component. Its
+ * only modification is this render-slot wrapper, which groups execution nodes
+ * and delegates every visible node through Chat's original child-slot face.
+ */
+function FoldedChatView(props: FoldProps) {
+  const {
+    foldT,
+    nativeChat: NativeChat,
+    ...nativeProps
+  } = props
+  const nativeRenderSlot = props.renderSlot as unknown as MirroredRenderSlot
+  const order = props.useSession(snapshot => snapshot.chat.order)
+  const nodes = props.useSession(snapshot => snapshot.chat.nodes)
+  const running = props.useSession(snapshot => snapshot.running)
+  const turns = useMemo(() => foldableTurns(order, nodes), [nodes, order])
+
+  const renderNativeNode = useCallback((
+    node: ChatConversationViewNode,
+    owner: object,
+    options?: MirrorRenderOptions,
+  ): ReactNode => nativeRenderSlot(
+    'conversation.chat.node',
+    { ...owner, node },
+    {
+      ...options,
+      entryKey: node.kind,
+      hookContext: node.key,
+      fallback: nativeNodeFallback(node, props.t),
+    },
+  ), [nativeRenderSlot, props.t])
+
+  const foldedRenderSlot = useCallback((
+    key: string,
+    owner: object,
+    options?: MirrorRenderOptions,
+  ): ReactNode => {
+    if (key !== 'conversation.chat.node') return nativeRenderSlot(key, owner, options)
+    const node = nodeFromOwner(owner)
+    if (node === undefined) return nativeRenderSlot(key, owner, options)
+    const turnNumber = turnOf(node)
+    const turn = turnNumber === undefined ? undefined : turns.get(turnNumber)
+    if (turn === undefined) return renderNativeNode(node, owner, options)
+
+    const isProcessNode = turn.processKeys.includes(node.key)
+    const isFinalNode = node.key === turn.finalKey
+    if (isProcessNode && node.key !== turn.anchorKey) return null
+    if (!isProcessNode && !isFinalNode) return renderNativeNode(node, owner, options)
+
+    const answer = isFinalNode
+      ? renderNativeNode(
+          turn.reasoningKey === node.key ? projectAssistantNode(node, 'answer') : node,
+          owner,
+          options,
+        )
+      : null
+
+    if (node.key !== turn.anchorKey) return answer
+
+    const processRows: ReactNode[] = turn.processKeys.map((processKey) => {
+      const processNode = nodes.get(processKey)
+      return processNode === undefined ? null : (
+        <div key={processKey} className={css.nativeFlowItem} data-execution-fold-node={processNode.kind}>
+          {renderNativeNode(processNode, owner, options)}
         </div>
-      )}
-      {result !== '' && (
-        <div className={css.ioSection}>
-          <span className={css.ioLabel}>OUT</span>
-          <pre>{result}</pre>
-        </div>
-      )}
-    </InnerExecutionDisclosure>
-  )
-}
-
-function renderConversationNode(
-  node: ChatConversationViewNode,
-  mode: RenderMode,
-  t: FoldProps['t'],
-): ReactNode {
-  if (node.kind === 'assistant-step') return <AssistantNode node={node} mode={mode} t={t} />
-  if (node.kind === 'user') {
-    const text = contentText((node.data as { readonly content?: unknown }).content)
-    return <div className={css.user}><MessageText text={text || safeJson(node.data)} /></div>
-  }
-  if (node.kind === 'steering') {
-    const text = contentText((node.data as { readonly content?: unknown }).content)
-    return (
-      <div className={css.messageBlock}>
-        <ProcessLabel>{t('node.steering')}</ProcessLabel>
-        <MessageText text={text || safeJson(node.data)} />
-      </div>
-    )
-  }
-  if (node.kind === 'context') {
-    const text = contentText((node.data as { readonly content?: unknown }).content)
-    const provenance = (node.data as {
-      readonly provenance?: { readonly label?: unknown }
-    }).provenance
-    const source = typeof provenance?.label === 'string' ? provenance.label : undefined
-    return (
-      <InnerExecutionDisclosure
-        kind="context"
-        icon={<IconBrowseOutline16 size={14} />}
-        title={t('node.context')}
-        summary={source}
-        bodyClassName={css.contextBody}
-      >
-        <pre data-context-injection-body>{text || safeJson(node.data)}</pre>
-      </InnerExecutionDisclosure>
-    )
-  }
-  if (node.kind === 'tool-call' || node.kind === 'tool') return <ToolNode node={node} t={t} />
-  if (node.kind === 'turn-tail') return null
-  return (
-    <div className={css.rawBlock}>
-      <ProcessLabel>{node.kind}</ProcessLabel>
-      <pre>{safeJson(node.data)}</pre>
-    </div>
-  )
-}
-
-function FoldedChatView({
-  useSession,
-  sessionId,
-  loadOlder,
-  t,
-}: FoldProps) {
-  const order = useSession(snapshot => snapshot.chat.order)
-  const nodes = useSession(snapshot => snapshot.chat.nodes)
-  const hasMore = useSession(snapshot => snapshot.hasMore)
-  const loadingOlder = useSession(snapshot => snapshot.loadingOlder)
-  const running = useSession(snapshot => snapshot.running)
-  const folded = useMemo(() => foldableTurns(order, nodes), [order, nodes])
-  const latestTurn = useMemo(() => {
-    let latest: number | undefined
-    for (const key of order) {
-      const source = nodes.get(key)
-      const candidate = source === undefined ? undefined : turnOf(source)
-      if (candidate !== undefined) latest = candidate
+      )
+    })
+    if (turn.reasoningKey !== undefined) {
+      const reasoningNode = nodes.get(turn.reasoningKey)
+      if (reasoningNode !== undefined) {
+        processRows.push(
+          <div key={`${turn.reasoningKey}:reasoning`} className={css.nativeFlowItem} data-execution-fold-node="reasoning">
+            {renderNativeNode(projectAssistantNode(reasoningNode, 'reasoning'), owner, options)}
+          </div>,
+        )
+      }
     }
-    return latest
-  }, [order, nodes])
 
-  const renderNode = (key: string, mode: RenderMode = 'all'): ReactNode => {
-    const source = nodes.get(key)
-    if (source === undefined) return null
-    return (
-      <div
-        className={css.flowItem}
-        data-chat-anchor-key={source.key}
-        data-chat-flow-key={source.key}
-        data-chat-flow-kind={source.kind}
-      >
-        {renderConversationNode(source, mode, t)}
-      </div>
+    const disclosure = (
+      <ExecutionDisclosure turn={turn} running={!turn.complete && running} t={foldT}>
+        {processRows}
+      </ExecutionDisclosure>
     )
-  }
-
-  const renderedTurns = new Set<number>()
-  const rows: ReactNode[] = []
-  for (const nodeKey of order) {
-    const node = nodes.get(nodeKey)
-    const turn = node === undefined ? undefined : turnOf(node)
-    const group = turn === undefined ? undefined : folded.get(turn)
-    if (group === undefined) {
-      rows.push(<div key={nodeKey}>{renderNode(nodeKey)}</div>)
-      continue
-    }
-    if (renderedTurns.has(group.turn)) continue
-    renderedTurns.add(group.turn)
-    const processCount = group.processKeys.length + (group.reasoningKey === undefined ? 0 : 1)
-    rows.push(
-      <section className={css.turn} key={`turn-${group.turn}`} data-execution-fold-turn={group.turn}>
-        {group.retainedKeys.map(key => <div key={key}>{renderNode(key)}</div>)}
-        <ExecutionDisclosure
-          running={running && latestTurn === group.turn}
-          count={processCount}
-          t={t}
-        >
-            {group.processKeys.map(key => <div key={key}>{renderNode(key)}</div>)}
-            {group.reasoningKey !== undefined && (
-              <div key={`${group.reasoningKey}-reasoning`}>{renderNode(group.reasoningKey, 'reasoning')}</div>
-            )}
-        </ExecutionDisclosure>
-        {group.finalKey !== undefined && renderNode(group.finalKey, 'answer')}
-        {group.tailKey !== undefined && renderNode(group.tailKey)}
-      </section>,
-    )
-  }
+    return answer === null
+      ? disclosure
+      : <div className={css.anchorStack}>{disclosure}{answer}</div>
+  }, [foldT, nativeRenderSlot, nodes, renderNativeNode, running, turns])
 
   return (
-    <div className={css.root} data-execution-fold-view={sessionId}>
-      <div className={css.column}>
-        {hasMore && (
-          <div className={css.older}>
-            <button className={css.loadEarlier} type="button" disabled={loadingOlder} onClick={loadOlder}>
-              {loadingOlder ? t('history.loading') : t('history.loadEarlier')}
-            </button>
-          </div>
-        )}
-        {rows}
-      </div>
-    </div>
+    <NativeChat
+      {...nativeProps as Omit<ChatViewSlotProps, 'renderSlot'>}
+      renderSlot={foldedRenderSlot as ChatViewSlotProps['renderSlot']}
+    />
   )
 }
 
+interface NativeFallbackBoundaryProps {
+  readonly children: ReactNode
+  readonly nativeChat: ComponentType<ChatViewSlotProps>
+  readonly nativeProps: ChatViewSlotProps
+}
+
+class NativeFallbackBoundary extends Component<NativeFallbackBoundaryProps, { readonly failed: boolean }> {
+  override state = { failed: false }
+
+  static getDerivedStateFromError(): { readonly failed: boolean } {
+    return { failed: true }
+  }
+
+  override componentDidCatch(error: unknown): void {
+    console.error('execution-fold failed; rendering the untouched stock Chat view:', error)
+  }
+
+  override render(): ReactNode {
+    if (!this.state.failed) return this.props.children
+    const NativeChat = this.props.nativeChat
+    return <NativeChat {...this.props.nativeProps} />
+  }
+}
+
+function ExecutionFoldChatEntry(props: FoldProps) {
+  const { foldT: _foldT, nativeChat, ...nativeProps } = props
+  return (
+    <NativeFallbackBoundary nativeChat={nativeChat} nativeProps={nativeProps as ChatViewSlotProps}>
+      <FoldedChatView {...props} />
+    </NativeFallbackBoundary>
+  )
+}
+
+/**
+ * rc.8-only short-term adapter: wrap the one stock Chat entry in place. This
+ * keeps its id, tab, store, child-slot ownership and native renderSlot binding
+ * intact; the plugin contributes no second conversation.view row.
+ */
 export function apply(ctx: Context): void {
-  ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'ui-execution-fold: dictionaries')
-  const t = ctx.locale.bind(NS)
-  ctx.slots.inject('conversation.view', () => ctx.slots.register({
-    name: 'conversation.view',
-    id: 'folded-chat',
-    order: -10,
-    locale: NS,
-    label: () => t('view.executionFold'),
-    inject: (sessionId: SessionId): FoldInjected => ({
-      loadOlder: () => { void ctx.sessions.binding(sessionId)?.session.loadOlder() },
-    }),
-  }, FoldedChatView))
+  ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'execution-fold: dictionaries')
+  const foldT = ctx.locale.bind(NS)
+
+  ctx.slots.inject('conversation.view', () => {
+    let mountedStock: StoredEntry | undefined
+    let restoreStock: (() => void) | undefined
+
+    const mount = (): void => {
+      const stock = ctx.slots.entries('conversation.view').find(entry =>
+        entry.options.id === 'chat'
+        && entry.children?.['conversation.chat.node'] !== undefined,
+      )
+      if (stock === mountedStock) return
+      restoreStock?.()
+      restoreStock = undefined
+      mountedStock = stock
+      if (stock === undefined || stock.inject === undefined) return
+
+      const nativeChat = stock.component as ComponentType<ChatViewSlotProps>
+      const stockInject = stock.inject as unknown as (...args: unknown[]) => Record<string, unknown>
+      const wrappedInject = (...args: unknown[]): Record<string, unknown> => ({
+        ...stockInject(...args),
+        foldT,
+        nativeChat,
+      })
+      stock.component = ExecutionFoldChatEntry
+      stock.inject = wrappedInject as StoredEntry['inject']
+      restoreStock = () => {
+        if (stock.component === ExecutionFoldChatEntry) stock.component = nativeChat
+        if (stock.inject === wrappedInject) stock.inject = stockInject as StoredEntry['inject']
+      }
+    }
+
+    mount()
+    const unsubscribe = ctx.slots.subscribe('conversation.view', mount)
+    return () => {
+      unsubscribe()
+      restoreStock?.()
+    }
+  })
 }
