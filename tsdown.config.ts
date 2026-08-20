@@ -60,7 +60,7 @@ const host: UserConfig = {
   target: 'es2024',
   fixedExtension: false,
   dts: false,
-  sourcemap: true,
+  sourcemap: false,
   clean: false,
 }
 
@@ -72,7 +72,7 @@ const client: UserConfig = {
   platform: 'browser',
   target: 'es2022',
   dts: false,
-  sourcemap: true,
+  sourcemap: false,
   clean: false,
   plugins: [inlineClientCss()],
   deps: {

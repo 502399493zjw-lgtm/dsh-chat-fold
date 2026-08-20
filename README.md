@@ -29,11 +29,15 @@ component with the untouched native props.
 ## Install
 
 ```bash
-dsh plugin --profile web add dsh-chat-fold@next
+dsh plugin --profile web add dsh-chat-fold@0.1.0-rc.8
 ```
 
 Restart the Web process after installing the package, then reload the browser.
-The prerelease is published under npm's `next` dist-tag.
+To follow later prereleases instead, install `dsh-chat-fold@next`.
+
+This plugin depends on rc.8's internal Chat registration shape. Re-run the
+tarball smoke and interaction tests before upgrading DSH; compatibility with a
+later DSH release must not be inferred from the package name or npm tag.
 
 ## Remove
 
@@ -43,3 +47,22 @@ dsh plugin --profile web remove dsh-chat-fold
 
 Restart the Web process and reload the browser. Removing the plugin restores
 the original Chat entry.
+
+## Development
+
+```bash
+pnpm install
+pnpm test
+pnpm run check
+pnpm run build
+pnpm run verify:package
+pnpm pack
+```
+
+`verify:package` checks the built package boundary. A release claim additionally
+requires installing the packed tarball into an isolated stock DSH `0.1.0-rc.8`
+profile and exercising the wrapped Chat entry.
+
+## License
+
+MIT
